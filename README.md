@@ -19,7 +19,6 @@ loki-ids/
 │  │  ├─ detectors.py
 │  │  ├─ state.py
 │  │  ├─ logger.py
-│  │  ├─ api.py
 │  │  └─ utils.py
 │  └─ requirements.txt
 
@@ -37,7 +36,7 @@ loki-ids/
 │  └─ check_env.sh
 
 ├─ Web-Interface/
-│  └─ .gitkeep
+│  └─ api.py
 
 ├─ systemd/
 │  └─ loki.service
