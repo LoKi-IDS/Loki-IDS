@@ -1,7 +1,7 @@
 from netfilterqueue import NetfilterQueue
 import threading
 import time
-from datetime import datetime
+import datetime
 from scapy.all import IP, TCP, UDP
 
 
@@ -27,7 +27,8 @@ def process_packet(packet, IsInput):
             src_port = pkt[UDP].sport
 
         # let's calculate the timestampppp::
-        finalTimeStamp = datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+        #finalTimeStamp = datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+        finalTimeStamp = datetime.datetime.fromtimestamp(timestamp, datetime.UTC).strftime('%Y-%m-%d %H:%M:%S')
 
         print(" *** Data Captured from INPUT chain ***")
         print()
