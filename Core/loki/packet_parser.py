@@ -1,11 +1,15 @@
 from scapy.all import TCP, UDP, IP
 import datetime
+import time
 
 def scan_packet(packet):
     pkt = IP(packet.get_payload()) # get the IP layerrr.
     src_ip = pkt[IP].src
     dst_ip = pkt[IP].dst
     timestamp = packet.get_timestamp()
+    if not timestamp:
+        timestamp = time.time()
+
     packetID = packet.id
     payloadLen = packet.get_payload_len()
     dst_port = 0

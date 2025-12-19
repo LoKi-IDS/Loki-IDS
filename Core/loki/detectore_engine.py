@@ -3,13 +3,13 @@ import time
 from collections import deque, defaultdict, Counter
 
 # global var
-MAX_SECONDS = 10
+MAX_SECONDS = 100
 
 class PortScanningDetector:
     def __init__(self, threshold, max_seconds):
         self.threshold = threshold
         self.log = defaultdict(deque)
-        self.m_sec = max_seconds
+        self.m_sec = MAX_SECONDS
 
         # the dictionary should have the time, and ip address, and port accessed.
         # the IP as a key, and list of (time, port access) as a value.
@@ -27,7 +27,7 @@ class PortScanningDetector:
             history = self.log.get(ip_address)
 
             # check if there's already an item there and the difference in time is not big..
-            while history and (timestamp - history[0][0] > self.m_sec) :
+            while history and ((timestamp - history[0][0]) > self.m_sec) :
                 # just pop up that entry::
                 history.popleft()
                 
@@ -36,7 +36,7 @@ class PortScanningDetector:
 
             # now you have everything fresh, let's go to the next step::
             # 2. now the last and most important thing, let's check if the uniqueue port access is bigger than the threshold::
-            active_ports = {item[1] for item in history}
+            active_ports = [item[1] for item in history]
             # I used a set to automatically add only unique items
 
             #now let's check if the list contains more than 10 items
