@@ -101,7 +101,7 @@ def process_packet(packet, IsInput, port_scanner, sig_scanner, ip_blacklist):
 
 def forward_agent(sig_object, ip_blacklist):
     nfq = NetfilterQueue()
-    port_scanner_object_forward = PortScanningDetector(10, 10)
+    port_scanner_object_forward = PortScanningDetector(15, 10)
     nfq.bind(200, lambda packet: process_packet(packet, False, port_scanner_object_forward, sig_object, ip_blacklist))
 
     try:
@@ -113,7 +113,7 @@ def forward_agent(sig_object, ip_blacklist):
 
 def input_agent(sig_object, ip_blacklist):
     nfq = NetfilterQueue()
-    port_scanner_object_input = PortScanningDetector(10, 10)
+    port_scanner_object_input = PortScanningDetector(15, 10)
     #sig_scanner_object_input = SignatureScanning()
     nfq.bind(100, lambda packet: process_packet(packet, True, port_scanner_object_input, sig_object, ip_blacklist))
         
