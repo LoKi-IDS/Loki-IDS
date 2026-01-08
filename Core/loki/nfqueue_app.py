@@ -17,11 +17,16 @@ def process_packet(packet, IsInput, port_scanner, sig_scanner, ip_blacklist):
         packetInfo = scan_packet(packet)
         src_ip = packetInfo.get("src_ip")
         dst_ip = packetInfo.get("dst_ip")
+        src_port = packetInfo.get("src_port")
+        dst_port = packetInfo.get("dst_port")
 
         if src_ip in ip_blacklist:
              logger.log_alert(
                 alert_type= "BLACKLIST",
                 src_ip= src_ip,
+                dst_ip= dst_ip,
+                src_port= src_port,
+                dst_port= dst_port,
                 message=f"Blocking packets coming from ip_blacklist on {chain_name} chain",
                 details={
                     "dst_ip": dst_ip,
@@ -39,7 +44,7 @@ def process_packet(packet, IsInput, port_scanner, sig_scanner, ip_blacklist):
         #print("the data are: ")
         #print(packetInfo)
         
-        logger.console_logger.info(f"[{chain_name}] Packet: {src_ip} -> {dst_ip} ({packetInfo.get('port')})")
+        logger.console_logger.info(f"[{chain_name}] Packet: {src_ip}:{src_port} -> {dst_ip}:{dst_port} ({packetInfo.get('port')})")
         
         # let's now try to analyze it with the port scanner:
         analyze_result = port_scanner.analyze_packet(src_ip, packetInfo.get("rawts"), dst_ip)
@@ -51,6 +56,9 @@ def process_packet(packet, IsInput, port_scanner, sig_scanner, ip_blacklist):
             logger.log_alert(
                 alert_type="BLACKLIST",
                 src_ip=src_ip,
+                dst_ip= dst_ip,
+                src_port= src_port,
+                dst_port= dst_port,
                 message=f"Port Scan Detected on {chain_name} chain",
                 details={
                     "dst_ip": dst_ip,
@@ -74,6 +82,9 @@ def process_packet(packet, IsInput, port_scanner, sig_scanner, ip_blacklist):
                 logger.log_alert(
                     alert_type="SIGNATURE",
                     src_ip=src_ip,
+                    dst_ip= dst_ip,
+                    src_port= src_port,
+                    dst_port= dst_port,
                     message=f"Signature Match: {RuleName}",
                     details={
                         "pattern": str(RulePattern),

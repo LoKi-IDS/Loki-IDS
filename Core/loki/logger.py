@@ -35,7 +35,7 @@ class LokiLogger:
             ch.setFormatter(formatter)
             self.console_logger.addHandler(ch)
 
-    def log_alert(self, alert_type, src_ip, message, details=None):
+    def log_alert(self, alert_type, src_ip, dst_ip, src_port, dst_port, message, details=None):
         """
         Logs an alert to the console and appends a JSON record to the log file.
         
@@ -48,7 +48,7 @@ class LokiLogger:
         timestamp = datetime.utcnow().isoformat()
         
         # 1. Console Output (Human Readable)
-        self.console_logger.warning(f"[{alert_type}] {src_ip} - {message}")
+        self.console_logger.warning(f"[{alert_type}] {src_ip}:{src_port}->{dst_ip}:{dst_port} - {message}")
         
         # 2. File Output (Machine Readable - JSON Lines)
         record = {
