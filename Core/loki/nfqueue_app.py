@@ -136,12 +136,14 @@ def input_agent(sig_object, ip_blacklist):
 
 
 if __name__ == "__main__":
-    logger.console_logger.info("========== Starting LOKI IDS ==========")
+    logger.console_logger.info("========== Starting LOKI IDS (YAML Mode) ==========")
+    logger.console_logger.info("[*] NOTE: Using YAML-based signatures (legacy mode)")
+    logger.console_logger.info("[*] For database integration, use: Web-Interface/run_ids_with_integration.py")
    #print()
     
     # let's now create the 2 threads..
     try:
-        sig_object = SignatureScanning() # Load rules
+        sig_object = SignatureScanning() # Load rules from YAML
     except Exception as e:
         logger.console_logger.error(f"Failed to load signatures: {e}")
         sig_object = None # Handle gracefully or exit

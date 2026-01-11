@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loki IDS Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛡️ Loki IDS Dashboard</h1>
+            <div class="status-indicator" id="statusIndicator">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Checking...</span>
+            </div>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+            <button class="tab-btn" data-tab="alerts">Alerts</button>
+            <button class="tab-btn" data-tab="signatures">Signatures</button>
+            <button class="tab-btn" data-tab="blacklist">Blacklist</button>
+        </nav>
+
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content active">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Total Alerts</h3>
+                    <p class="stat-value" id="totalAlerts">-</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Alerts (24h)</h3>
+                    <p class="stat-value" id="alerts24h">-</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Blacklist Size</h3>
+                    <p class="stat-value" id="blacklistSize">-</p>
+                </div>
+                <div class="stat-card">
+                    <h3>IDS Status</h3>
+                    <p class="stat-value" id="idsStatus">-</p>
+                </div>
+            </div>
+
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>Alerts by Type</h3>
+                    <canvas id="alertsByTypeChart"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Top Attacking IPs</h3>
+                    <div id="topIPsList"></div>
+                </div>
+            </div>
+
+            <div class="recent-alerts">
+                <h3>Recent Alerts</h3>
+                <div id="recentAlertsList"></div>
+            </div>
+        </div>
+
+        <!-- Alerts Tab -->
+        <div id="alerts" class="tab-content">
+            <div class="filters">
+                <select id="alertTypeFilter">
+                    <option value="">All Types</option>
+                    <option value="SIGNATURE">Signature</option>
+                    <option value="BEHAVIOR">Behavior</option>
+                    <option value="BLACKLIST">Blacklist</option>
+                </select>
+                <input type="text" id="ipFilter" placeholder="Filter by IP...">
+                <button onclick="loadAlerts()">Refresh</button>
+            </div>
+            <div id="alertsList"></div>
+            <div class="pagination">
+                <button id="prevPage" onclick="changePage(-1)">Previous</button>
+                <span id="pageInfo">Page 1</span>
+                <button id="nextPage" onclick="changePage(1)">Next</button>
+            </div>
+        </div>
+
+        <!-- Signatures Tab -->
+        <div id="signatures" class="tab-content">
+            <div class="action-bar">
+                <button onclick="showAddSignatureModal()">+ Add Signature</button>
+                <button onclick="reloadIDSSignatures()">Reload IDS Signatures</button>
+                <button onclick="reloadSignatures()">Import from YAML</button>
+            </div>
+            <div id="signaturesList"></div>
+        </div>
+
+        <!-- Blacklist Tab -->
+        <div id="blacklist" class="tab-content">
+            <div class="action-bar">
+                <input type="text" id="newIPInput" placeholder="IP Address">
+                <input type="text" id="newIPReason" placeholder="Reason (optional)">
+                <button onclick="addToBlacklist()">Add IP</button>
+            </div>
+            <div id="blacklistList"></div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Signature Modal -->
+    <div id="addSignatureModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2 id="modalTitle">Add New Signature</h2>
+            <form id="signatureForm">
+                <input type="hidden" id="sigId" value="">
+                <label>Name:</label>
+                <input type="text" id="sigName" required>
+                <label>Pattern:</label>
+                <input type="text" id="sigPattern" required>
+                <label>Action:</label>
+                <select id="sigAction" required>
+                    <option value="alert">Alert</option>
+                    <option value="drop">Drop</option>
+                </select>
+                <label>Description:</label>
+                <textarea id="sigDescription"></textarea>
+                <label>
+                    <input type="checkbox" id="sigEnabled" checked> Enabled
+                </label>
+                <button type="submit" id="submitButton">Add Signature</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
+

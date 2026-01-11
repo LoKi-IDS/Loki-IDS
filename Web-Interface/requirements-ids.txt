@@ -1,0 +1,7 @@
+# Additional requirements for running IDS with integration
+# These require system libraries to be installed first:
+# sudo apt-get install python3-dev libnetfilter-queue-dev libnfnetlink-dev libpcap-dev
+
+netfilterqueue==0.8.1
+scapy==2.5.0
+
