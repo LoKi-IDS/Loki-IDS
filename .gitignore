@@ -1,2 +1,3 @@
 logs/loki_alerts.jsonl
-Core/loki/__pycache__/
+__pycache__/
+
