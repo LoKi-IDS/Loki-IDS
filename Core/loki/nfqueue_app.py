@@ -4,7 +4,7 @@ import time
 from packet_parser import scan_packet
 from detectore_engine import PortScanningDetector
 from signature_engine import SignatureScanning
-from scapy.all import IP, Raw
+from scapy.all import IP, Raw, ICMP
 from logger import logger  # my logger module
 
 
@@ -22,6 +22,12 @@ def process_packet(packet, IsInput, port_scanner, sig_scanner, ip_blacklist):
         raw_timestamp = packetInfo.get("rawts")
         tcp_flags = packetInfo.get("tcp_flags")
         port = packetInfo.get('port')
+
+        # safe, nfqueue always returns the IP layer not the ethernet..
+        ip_layer = IP(packet.get_payload())
+        is_icmp = ip_layer.haslayer(ICMP)
+        if is_icmp:
+            port = "ICMP"
 
 
         if src_ip in ip_blacklist:
@@ -67,38 +73,94 @@ def process_packet(packet, IsInput, port_scanner, sig_scanner, ip_blacklist):
         # TCP should be only matter if SYN and not ACK to be classified as an
         # attack (again just for the moment, maybe modified latter)..
         if port == "TCP" and (tcp_flags & 0x02) and not (tcp_flags & 0x10):
-            analyze_result = port_scanner.analyze_tcp()
+
+            analyze_result = port_scanner.analyze_tcp(src_ip, dst_ip, raw_timestamp, dst_port)
+
+            if analyze_result != 0:
+                if analyze_result == 1:
+                    message = f"Port Scan Detected on {chain_name} chain"
+                else:
+                    message = f"TCP Flood (DoS/DDoS) Detected on {chain_name} chain"
+
+                # ALERT
+                logger.log_alert(
+                    alert_type="BEHAVIOR",
+                    src_ip= src_ip,
+                    dst_ip= dst_ip,
+                    src_port= src_port,
+                    dst_port= dst_port,
+                    message= message,
+                    details={
+                        "dst_ip": dst_ip,
+                        "dst_port": dst_port,
+                        "chain": chain_name
+                    }
+                )
 
         elif port == "UDP":
-            analyze_result = port_scanner.analyze_udp()
 
-        else: # MORE LIKELY TO BE ICMP
-            analyze_result = port_scanner.analyze_other()
+            analyze_result = port_scanner.analyze_udp(dst_ip, raw_timestamp, dst_port)
+
+            if analyze_result:
+                # ALERT:
+                logger.log_alert(
+                    alert_type="BEHAVIOR",
+                    src_ip=src_ip,
+                    dst_ip= dst_ip,
+                    src_port= src_port,
+                    dst_port= dst_port,
+                    message=f"UDP Flood (DoS/DDoS) Detected on {chain_name} chain",
+                    details={
+                        "dst_ip": dst_ip,
+                        "dst_port": dst_port,
+                        "chain": chain_name
+                    }
+                )
+
+        elif is_icmp and ip_layer[ICMP].type == 8 : # echo req
+            analyze_result = port_scanner.analyze_icmp(dst_ip, raw_timestamp)
+            if analyze_result:
+                # ALERT: Port Scan Detected
+                logger.log_alert(
+                    alert_type="BEHAVIOR",
+                    src_ip=src_ip,
+                    dst_ip= dst_ip,
+                    src_port= src_port,
+                    dst_port= dst_port,
+                    message=f"ICMP Flood (DoS/DDoS) Detected on {chain_name} chain",
+                    details={
+                        "dst_ip": dst_ip,
+                        "dst_port": dst_port,
+                        "chain": chain_name
+                    }
+                )
+
+        else : # some other packet, we may just log it to type of packets in normal conditions
+            logger.console_logger.info(f"Wierd type of packet: [{chain_name}] Packet: {src_ip}:{src_port} -> {dst_ip}:{dst_port} ({port})")
+
 
         #analyze_result = port_scanner.analyze_packet(src_ip, dst_ip, raw_timestamp, dst_port, tcp_flags)
         
         #print(f"the analyze result is : {analyze_result}")
         
-        if analyze_result:
-            # ALERT: Port Scan Detected
-            logger.log_alert(
-                alert_type="BLACKLIST",
-                src_ip=src_ip,
-                dst_ip= dst_ip,
-                src_port= src_port,
-                dst_port= dst_port,
-                message=f"Port Scan Detected on {chain_name} chain",
-                details={
-                    "dst_ip": dst_ip,
-                    "dst_port": packetInfo.get("dst_port"),
-                    "chain": chain_name
-                }
-            )
+        # if analyze_result:
+        #     # ALERT: Port Scan Detected
+        #     logger.log_alert(
+        #         alert_type="BLACKLIST",
+        #         src_ip=src_ip,
+        #         dst_ip= dst_ip,
+        #         src_port= src_port,
+        #         dst_port= dst_port,
+        #         message=f"Port Scan Detected on {chain_name} chain",
+        #         details={
+        #             "dst_ip": dst_ip,
+        #             "dst_port": packetInfo.get("dst_port"),
+        #             "chain": chain_name
+        #         }
+        #     )
 
         # let's now test the signature based scanning..
-       
-        ip_layer = IP(packet.get_payload())
-       
+              
         if ip_layer.haslayer(Raw):
           # print("packet has a Raw layer..")
             RawData = ip_layer[Raw].load
@@ -193,5 +255,3 @@ if __name__ == "__main__":
         print()
         logger.console_logger.info("[*] Received ^C, Quitting...")
         logger.console_logger.info(" ========== Stopping LOKI IDS ==========")
-
-
