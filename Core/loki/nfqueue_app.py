@@ -8,7 +8,7 @@ from scapy.all import IP, Raw, ICMP
 from logger import logger  # my logger module
 
 
-def process_packet(packet, IsInput, port_scanner, sig_scanner, ip_blacklist):
+def process_packet(packet, IsInput, port_scanner, sig_scanner):
     
     chain_name = "INPUT" if IsInput else "FORWARD"
 
@@ -30,21 +30,21 @@ def process_packet(packet, IsInput, port_scanner, sig_scanner, ip_blacklist):
             port = "ICMP"
 
 
-        if src_ip in ip_blacklist:
-             logger.log_alert(
-                alert_type= "BLACKLIST",
-                src_ip= src_ip,
-                dst_ip= dst_ip,
-                src_port= src_port,
-                dst_port= dst_port,
-                message=f"Blocking packets coming from ip_blacklist on {chain_name} chain",
-                details={
-                    "dst_ip": dst_ip,
-                    "dst_port": packetInfo.get("dst_port"),
-                    "chain": chain_name
-                })
-             packet.drop()
-             return
+        # if src_ip in ip_blacklist:
+        #      logger.log_alert(
+        #         alert_type= "BLACKLIST",
+        #         src_ip= src_ip,
+        #         dst_ip= dst_ip,
+        #         src_port= src_port,
+        #         dst_port= dst_port,
+        #         message=f"Blocking packets coming from ip_blacklist on {chain_name} chain",
+        #         details={
+        #             "dst_ip": dst_ip,
+        #             "dst_port": packetInfo.get("dst_port"),
+        #             "chain": chain_name
+        #         })
+        #      packet.drop()
+        #      return
 
       #  print(" *** Data Captured from INPUT chain ***")
       # print()
@@ -184,11 +184,11 @@ def process_packet(packet, IsInput, port_scanner, sig_scanner, ip_blacklist):
                 )
                 
                 # Check if we need to drop based on signature rule
-                if Drop:
-                    logger.console_logger.warning(f"[*] Dropping packet from {src_ip} due to signature match.")
-                    ip_blacklist.append(src_ip)
-                    packet.drop()
-                    return 
+                # if Drop:
+                #     logger.console_logger.warning(f"[*] Dropping packet from {src_ip} due to signature match.")
+                #     ip_blacklist.append(src_ip)
+                #     packet.drop()
+                #     return 
 
        #else:
         #   print("the packet has no Raw Layer..***********")
@@ -200,10 +200,10 @@ def process_packet(packet, IsInput, port_scanner, sig_scanner, ip_blacklist):
         logger.console_logger.error(f"[!] Error processing packet: {e}")
         packet.accept()
 
-def forward_agent(sig_object, ip_blacklist):
+def forward_agent(sig_object):
     nfq = NetfilterQueue()
     port_scanner_object_forward = PortScanningDetector(15, 10)
-    nfq.bind(200, lambda packet: process_packet(packet, False, port_scanner_object_forward, sig_object, ip_blacklist))
+    nfq.bind(200, lambda packet: process_packet(packet, False, port_scanner_object_forward, sig_object))
 
     try:
         nfq.run()
@@ -212,11 +212,11 @@ def forward_agent(sig_object, ip_blacklist):
         logger.console_logger.critical(f"[!] Forward agent crashed: {e}")
 
 
-def input_agent(sig_object, ip_blacklist):
+def input_agent(sig_object):
     nfq = NetfilterQueue()
     port_scanner_object_input = PortScanningDetector(15, 10)
     #sig_scanner_object_input = SignatureScanning()
-    nfq.bind(100, lambda packet: process_packet(packet, True, port_scanner_object_input, sig_object, ip_blacklist))
+    nfq.bind(100, lambda packet: process_packet(packet, True, port_scanner_object_input, sig_object))
         
     try:
         nfq.run()
@@ -237,9 +237,8 @@ if __name__ == "__main__":
         sig_object = None # Handle gracefully or exit
 
     if sig_object:
-        ip_blacklist = []
-        input_thread = threading.Thread(target=input_agent, args=(sig_object, ip_blacklist,), daemon=True)
-        forward_thread = threading.Thread(target=forward_agent, args=(sig_object, ip_blacklist,), daemon=True)
+        input_thread = threading.Thread(target=input_agent, args=(sig_object,), daemon=True)
+        forward_thread = threading.Thread(target=forward_agent, args=(sig_object,), daemon=True)
 
         # now let's start it:::
         input_thread.start()
