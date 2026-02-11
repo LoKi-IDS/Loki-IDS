@@ -147,7 +147,7 @@ In a smart home context, IoT devices include smart locks, thermostats, cameras, 
 \subsection{Architecture of IoT Systems}
 \label{sec:architecture}
 
-IoT systems are commonly described using a layered architecture. While the exact number of layers varies across the literature, the most widely adopted model consists of three to five layers~\cite{khan2012future, wu2010architecture}:
+IoT systems are commonly described using a layered architecture. Whilst the exact number of layers varies across the literature, the most widely adopted model consists of three to five layers~\cite{khan2012future, wu2010architecture}:
 
 \subsubsection*{Three-Layer Model}
 
@@ -243,7 +243,7 @@ The following are well-documented attack categories relevant to IoT environments
 \subsection{Literature Review (PRISMA)}
 \label{sec:prisma}
 
-A literature review following the PRISMA (Preferred Reporting Items for Systematic Reviews and Meta-Analyses) methodology was conducted to survey existing intrusion detection systems designed for IoT environments.
+A literature review following the PRISMA (Preferred Reporting Items for Systematic Reviews and Meta-Analyses) methodology~\cite{page2021prisma} was conducted to survey existing intrusion detection systems designed for IoT environments.
 
 \subsubsection*{Search Strategy}
 
@@ -320,7 +320,7 @@ Most existing solutions either require significant computational resources (maki
 \section{Test Environment Establishment}
 \label{sec:environment}
 
-This section describes the physical and software environment built to develop and evaluate the IDS. The test-bed consists of a Raspberry~Pi~5 acting as a Wi-Fi access point, network gateway, MQTT broker, and API server, with two ESP32 microcontrollers representing typical smart home IoT devices.
+This section describes the physical and software environment built to develop and evaluate the IDS. The test-bed consists of a Raspberry~Pi~5 acting as a Wi-Fi access point, network gateway, MQTT broker, and API server, with two ESP32 microcontrollers representing typical smart home IoT devices. A second Raspberry~Pi serves as the attacker machine, connected to the network through the MikroTik router rather than through the access point, simulating an external adversary.
 
 \subsection{Hardware Components}
 \label{sec:hardware}
@@ -338,7 +338,8 @@ Table~\ref{tab:hardware} lists all hardware used in the test environment.
 Central gateway  & Raspberry Pi 5 (8\,GB) & Access point, router, MQTT broker, IDS host, API server \\
 IoT device 1     & ESP32 DevKit v1        & Entryway security hub (PIR sensor + buzzer + LED) \\
 IoT device 2     & ESP32 DevKit v1        & Smart bulb controller (NeoPixel RGB LED strip) \\
-Network uplink   & MikroTik Router        & Optional internet connectivity via Ethernet \\
+Attacker machine & Raspberry Pi           & Attack simulation and IDS testing \\
+Network uplink   & MikroTik Router        & Internet connectivity and attacker network via Ethernet \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -346,18 +347,19 @@ Network uplink   & MikroTik Router        & Optional internet connectivity via E
 \subsection{Network Architecture}
 \label{sec:network}
 
-The Raspberry~Pi creates an isolated Wi-Fi network to which all IoT devices and management clients connect. The Pi's wireless interface (\texttt{wlan0}) is assigned the static IP \texttt{10.0.0.1/24} and acts as the DHCP server for the subnet \texttt{10.0.0.0/24}. An optional Ethernet uplink (\texttt{eth0}) provides internet access through a MikroTik router.
+The Raspberry~Pi creates an isolated Wi-Fi network to which all IoT devices and management clients connect. The Pi's wireless interface (\texttt{wlan0}) is assigned the static IP \texttt{10.0.0.1/24} and acts as the DHCP server for the subnet \texttt{10.0.0.0/24}. The Ethernet interface (\texttt{eth0}) connects to a MikroTik router, which provides internet access and serves as the network entry point for the attacker machine. The attacker Raspberry~Pi connects through the router---not through the access point---simulating an external adversary who has network-level reachability to the gateway but is not a member of the IoT Wi-Fi network. Attacks arriving via the router enter the Pi through \texttt{eth0} and are intercepted on the INPUT chain (traffic destined to the Pi) or the FORWARD chain (traffic routed towards IoT devices on \texttt{wlan0}).
 
 \begin{lstlisting}[frame=none,backgroundcolor=\color{white}]
-                  Internet (optional)
-                       |
-                 [MikroTik Router]
-                       |  eth0
-                [Raspberry Pi AP]
-                 wlan0: 10.0.0.1/24
-               /       |       \
-        [ESP32-1]  [ESP32-2]  [Browser/Attacker]
-        10.0.0.x   10.0.0.x   10.0.0.x
+                      Internet
+                         |
+                  [MikroTik Router]
+                   /             \
+           eth0  /               \
+   [Raspberry Pi AP]        [Attacker RPi]
+    wlan0: 10.0.0.1/24
+       /       |       \
+ [ESP32-1]  [ESP32-2]  [Browser]
+ 10.0.0.x   10.0.0.x   10.0.0.x
 \end{lstlisting}
 
 \subsubsection*{Raspberry Pi Roles}
@@ -382,7 +384,7 @@ sudo iptables -I FORWARD -i eth0 -o wlan0 -p tcp \
 
 \subsubsection*{Static IP Configuration}
 
-To prevent \texttt{wlan0} from acquiring an address via DHCP from the upstream router, the Ethernet interface is denied in \texttt{dhcpcd.conf}:
+To ensure the Pi's network interfaces remain statically configured, the Ethernet interface (\texttt{eth0}) is excluded from DHCP management in \texttt{dhcpcd.conf}:
 
 \begin{lstlisting}[language=bash,frame=none,backgroundcolor=\color{white}]
 # /etc/dhcpcd.conf
@@ -544,7 +546,7 @@ Python Environment  & Python 3.13 (venv)        & Virtual environment for all de
 \begin{itemize}
     \item Raspberry~Pi 5 with Raspberry~Pi OS (Desktop).
     \item Two ESP32 DevKit modules with sensor kits.
-    \item Python 3.11+ installed on the Pi.
+    \item Python 3.12 or later installed on the Pi (Python 3.13 recommended).
     \item Arduino IDE or PlatformIO for ESP32 firmware flashing.
 \end{itemize}
 
@@ -626,6 +628,26 @@ mosquitto_sub -t "esp32/+/status" -v
 \section{Implementation of IDS}
 \label{sec:ids}
 
+\subsection{Introduction and Motivation}
+\label{sec:ids_intro}
+
+Loki IDS is a lightweight, network-based Intrusion Detection System designed to protect smart home IoT environments. It is deployed on a Raspberry~Pi that acts simultaneously as a Wi-Fi access point, IoT gateway, and MQTT broker. All network traffic flowing through the gateway is intercepted and inspected in real time, enabling the detection of both known attack signatures and anomalous behavioural patterns.
+
+The system employs a hybrid detection strategy that combines signature-based pattern matching with statistical behavioural analysis. The behavioural engine uses a dual-threshold approach: a sliding window counts the number of packets within a fixed time interval, whilst an Exponentially Weighted Moving Average (EWMA) estimator provides a smoothed, real-time measurement of the packet arrival rate in packets per second.
+
+Crucially, the EWMA thresholds are \emph{adaptive}. Rather than relying on fixed, manually-tuned rate limits, each network flow learns its own baseline ``normal'' rate using a slow-moving EWMA. The detection threshold is then computed as a configurable multiple of that baseline (e.g.\ $5\times$ normal). This means the IDS automatically adapts to the actual traffic profile of the network: a flow that normally sees 10~packets per second will have a threshold of 50~pps, whilst a flow that normally sees 2~pps will have a threshold of 10~pps. A minimum floor value ensures the system remains protected during the initial warm-up period before a reliable baseline has been established.
+
+Loki IDS is capable of detecting the following attack categories:
+\begin{itemize}
+    \item TCP SYN port scanning,
+    \item TCP SYN flood (DoS/DDoS),
+    \item UDP flood (DoS/DDoS),
+    \item ICMP flood (DoS/DDoS), and
+    \item arbitrary payload-based attacks via configurable signature rules (e.g.\ SQL injection, XSS, path traversal).
+\end{itemize}
+
+All alerts are logged to structured JSONL files and concurrently written to an SQLite database for integration with the web dashboard.
+
 \subsection{System and Adversary Model}
 \label{sec:models}
 
@@ -652,95 +674,167 @@ We consider an adversary with the following characteristics:
     \item \textbf{Limitations:} The adversary does not have physical access to the Raspberry~Pi or ESP32 devices. The adversary cannot compromise the IDS itself (the IDS is trusted). The adversary does not have credentials for the Mosquitto broker (if authentication is enabled).
 \end{itemize}
 
-\subsection{IDS Concept}
-\label{sec:concept}
+\subsection{System Architecture Overview}
+\label{sec:arch_overview}
 
-Loki IDS is a \textbf{hybrid network-based intrusion detection system} that combines behavioural analysis with signature-based pattern matching. It operates directly on the smart home gateway (Raspberry~Pi), intercepting packets using Linux NFQUEUE before they are routed or delivered.
+The Loki IDS is composed of several modular components that operate together in a pipeline architecture. Figure~\ref{fig:arch} illustrates the data flow from packet arrival to alert generation.
 
-\subsubsection*{Core Design Principles}
-
-\begin{enumerate}
-    \item \textbf{Gateway-level inspection:} By running on the gateway, the IDS can inspect all traffic without requiring agents on the constrained IoT devices. This is critical because ESP32 devices lack the resources to run detection logic.
-
-    \item \textbf{Dual detection approach:}
-    \begin{itemize}
-        \item \emph{Behavioural detection} uses a sliding window combined with an Exponentially Weighted Moving Average (EWMA) rate estimator to detect volumetric anomalies (floods, scans) in real time. Both the packet count within a time window and the smoothed packet rate must exceed their respective thresholds before an alert is raised. This dual-check mechanism reduces false positives.
-        \item \emph{Signature detection} matches packet payloads against a database of known malicious patterns (e.g.\ SQL injection strings, XSS payloads). Signatures are managed through the web interface and can be imported from YAML files.
-    \end{itemize}
-
-    \item \textbf{Alert lifecycle management:} Rather than generating a separate alert for every malicious packet (which would flood the logs during a sustained attack), Loki tracks each attack through three stages: STARTED (first detection), ONGOING (periodic updates with packet count and rate), and ENDED (final summary with total duration and packet statistics).
-
-    \item \textbf{Non-blocking architecture:} The IDS core and the API server run as separate processes. The IDS sends alerts to the API via HTTP POST with a short timeout (0.5\,s), so a slow database write never blocks packet processing.
-\end{enumerate}
-
-\subsection{Implementation}
-\label{sec:implementation}
-
-\subsubsection{Architecture Overview}
-
+\begin{figure}[H]
 \begin{lstlisting}[frame=none,backgroundcolor=\color{white},basicstyle=\ttfamily\footnotesize]
- +-----------------------------------------------------+
- |                   Raspberry Pi                       |
- |                                                      |
- |  +--------------+       +------------------------+  |
- |  | iptables     |       | FastAPI Server (:8080) |  |
- |  | NFQUEUE      |       |  +------------------+  |  |
- |  |  +--------+  | HTTP  |  | REST API         |  |  |
- |  |  | IDS    |---------->  | /api/alerts      |  |  |
- |  |  | Core   |  | POST  |  | /api/signatures  |  |  |
- |  |  +--------+  |       |  | /api/iot         |  |  |
- |  |   |          |       |  +------------------+  |  |
- |  |   | accepts/ |       |  +------------------+  |  |
- |  |   | drops    |       |  | SQLite DB        |  |  |
- |  |   v          |       |  | (async, WAL)     |  |  |
- |  | [Network]    |       |  +------------------+  |  |
- |  +--------------+       |  +------------------+  |  |
- |                          |  | MQTT Client      |  |  |
- |                          |  | (paho-mqtt)      |  |  |
- |                          |  +--------+---------+  |  |
- |                          +-----------+------------+  |
- |                                      |               |
- |                          +-----------v------------+  |
- |                          | Mosquitto Broker       |  |
- |                          | (:1883)                |  |
- |                          +-----------+------------+  |
- +-------------------------- -----------+---------------+
-                                        | MQTT
-                            +-----------+------------+
-                            |                        |
-                       [ESP32-1]                [ESP32-2]
-                     Motion Sensor            RGB Controller
+  Network Traffic (Wi-Fi AP)
+           |
+           v
+  [iptables NFQUEUE] --- INPUT chain  (queue 100)
+           |              FORWARD chain (queue 200)
+           v
+  [Packet Parser] --- packet_parser.py
+  (Scapy: IP/TCP/UDP/ICMP extraction)
+           |
+    +------+------+
+    |             |
+    v             v
+ [Behaviour    [Signature
+  Engine]       Engine]
+  detectore_    signature_
+  engine.py     engine.py
+ (Sliding       (Payload pattern
+  Window +       matching from DB)
+  Adaptive
+  EWMA)
+    |             |
+    +------+------+
+           |
+           v
+  [Logger Module] --- logger.py
+  (Deduplication, Lifecycle:
+   STARTED -> ONGOING -> ENDED)
+           |
+    +------+------+
+    |             |
+    v             v
+ [JSONL File]  [SQLite DB]
+  logs/         (via db_integration.py)
+\end{lstlisting}
+\caption{Loki IDS data flow architecture.}
+\label{fig:arch}
+\end{figure}
+
+The system runs two concurrent threads: one bound to NFQUEUE~100 (INPUT chain, traffic destined for the Raspberry~Pi itself) and one bound to NFQUEUE~200 (FORWARD chain, traffic passing through the Pi to IoT devices). Both threads share the same signature engine instance but maintain independent behavioural detection state to avoid cross-chain interference.
+
+\subsection{Network Interception Layer}
+\label{sec:interception}
+
+\subsubsection{iptables and NFQUEUE}
+
+Loki IDS uses the Linux Netfilter framework to intercept packets in the kernel before they are delivered to their destination. The \texttt{iptables} utility inserts NFQUEUE rules that redirect packets to userspace queues where the Python application can inspect them. The \texttt{-{}-queue-bypass} flag ensures that network traffic continues to flow even if the IDS process is not running or crashes.
+
+The following iptables rules are applied by \texttt{Scripts/iptables\_up.sh}:
+
+\begin{lstlisting}[language=bash]
+# Enable IP forwarding (required for FORWARD chain)
+sudo sysctl -w net.ipv4.ip_forward=1
+
+# Intercept forwarded traffic (IoT devices <-> Internet)
+sudo iptables -I FORWARD -j NFQUEUE --queue-num 200 --queue-bypass
+
+# Intercept traffic destined for the Pi itself
+sudo iptables -I INPUT -j NFQUEUE --queue-num 100 --queue-bypass
 \end{lstlisting}
 
-\subsubsection{Packet Interception}
+\subsubsection{Teardown}
 
-Packets are intercepted using Linux Netfilter's NFQUEUE mechanism. Two iptables rules redirect traffic to user-space queues:
+The cleanup script \texttt{Scripts/iptables\_down.sh} removes the NFQUEUE rules. The delete commands must match the insert commands exactly, including the \texttt{-{}-queue-bypass} flag; otherwise, \texttt{iptables} will not find the rule to delete. The script uses a \texttt{while} loop to handle duplicate rules that may exist if the setup script was run multiple times:
 
-\begin{itemize}
-    \item \textbf{INPUT chain} (queue 100): Captures traffic destined to the Pi itself (e.g.\ SSH attempts, API requests from attackers).
-    \item \textbf{FORWARD chain} (queue 200): Captures traffic passing through the Pi between IoT devices and the external network.
-\end{itemize}
+\begin{lstlisting}[language=bash]
+# Delete rules (must include --queue-bypass to match)
+while sudo iptables -D FORWARD -j NFQUEUE \
+      --queue-num 200 --queue-bypass 2>/dev/null; do :; done
+while sudo iptables -D INPUT -j NFQUEUE \
+      --queue-num 100 --queue-bypass 2>/dev/null; do :; done
+\end{lstlisting}
 
-The \texttt{-{}-queue-bypass} flag ensures that if the IDS process is not running, packets are accepted normally rather than dropped. Localhost traffic is excluded from inspection to avoid interfering with internal API communication. Each queue is processed by a dedicated thread in \texttt{nfqueue\_app.py}, ensuring that INPUT and FORWARD traffic are handled concurrently.
+\subsubsection{NetfilterQueue Binding}
 
-\subsubsection{Packet Parsing}
+In Python, the \texttt{NetfilterQueue} library binds to the kernel queues and delivers raw packet payloads to a callback function. Two threads are created at startup, each binding to one queue number:
 
-The \texttt{packet\_parser.py} module uses Scapy to extract structured information from raw packets: source and destination IP addresses, source and destination ports (TCP/UDP), TCP flags (SYN, ACK, RST, FIN), protocol type (TCP, UDP, ICMP), raw timestamp, and payload length. This information is returned as a dictionary and passed to the detection engines.
+\begin{lstlisting}[language=python]
+# Input chain thread
+nfq = NetfilterQueue()
+nfq.bind(100, callback)  # INPUT chain
+nfq.run()
 
-\subsubsection{Behavioural Detection Engine}
+# Forward chain thread
+nfq = NetfilterQueue()
+nfq.bind(200, callback)  # FORWARD chain
+nfq.run()
+\end{lstlisting}
 
-The \texttt{detectore\_engine.py} module implements the behavioural analysis component. It consists of two classes:
+\subsection{Packet Parsing Module}
+\label{sec:parsing}
 
-\paragraph{EWMARateEstimator.} Computes a smoothed packet rate using the EWMA formula:
+The packet parser (\texttt{packet\_parser.py}) receives a raw NFQUEUE packet object and extracts the fields required by the detection engines. Since NFQUEUE delivers packets starting from the IP layer (no Ethernet header), the Scapy library is used to parse the IP, TCP, UDP, and ICMP layers.
 
+\subsubsection{Extracted Fields}
+
+Table~\ref{tab:parsed_fields} lists all fields extracted by the parser.
+
+\begin{table}[H]
+\centering
+\caption{Fields extracted by the packet parser.}
+\label{tab:parsed_fields}
+\begin{tabular}{llp{7cm}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Description} \\
+\midrule
+\texttt{src\_ip}     & \texttt{str}   & Source IP address \\
+\texttt{dst\_ip}     & \texttt{str}   & Destination IP address \\
+\texttt{src\_port}   & \texttt{int}   & Source port (0 if ICMP) \\
+\texttt{dst\_port}   & \texttt{int}   & Destination port (0 if ICMP) \\
+\texttt{port}        & \texttt{str}   & \texttt{"TCP"}, \texttt{"UDP"}, or \texttt{""} (for ICMP) \\
+\texttt{tcp\_flags}  & \texttt{int}   & TCP flags bitmask (\texttt{SYN=0x02}, \texttt{ACK=0x10}, etc.) \\
+\texttt{rawts}       & \texttt{float} & Raw Unix timestamp (seconds since epoch) \\
+\texttt{timestamp}   & \texttt{str}   & Formatted timestamp (\texttt{YYYY-MM-DD HH:MM:SS}) \\
+\texttt{packetID}    & \texttt{int}   & NFQUEUE packet identifier \\
+\texttt{payloadLen}  & \texttt{int}   & Total IP payload length in bytes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The parser returns a dictionary containing all these fields, which is consumed by both the behavioural and signature detection engines. Only TCP SYN packets (SYN flag set, ACK flag not set) are forwarded to the TCP analysis functions, as legitimate TCP traffic typically includes ACK flags in established connections.
+
+\subsection{Behavioural Detection Engine}
+\label{sec:behaviour}
+
+The behavioural detection engine (\texttt{detectore\_engine.py}) implements anomaly-based detection for four attack types. It employs a dual-threshold strategy that combines a sliding time window with packet counting and an adaptive EWMA rate estimator that learns per-flow baselines from live traffic.
+
+\subsubsection{Sliding Time Window}
+
+For each flow key (e.g.\ a unique combination of destination IP and port), the engine maintains a \emph{deque} (double-ended queue) of packet timestamps. On each new packet, timestamps older than the configured window duration are removed from the front of the deque, and the new timestamp is appended to the back. The number of entries remaining in the deque represents the packet count within the current window.
+
+This approach has $O(1)$ amortised time complexity per packet, since each timestamp is enqueued once and dequeued at most once. Memory usage is bounded by the maximum number of packets that can arrive within a single window period.
+
+\subsubsection{EWMA Rate Estimator}
+
+The EWMA estimator provides a smoothed, real-time measurement of the packet arrival rate in packets per second. Unlike the sliding window, which counts discrete packets, the EWMA captures the intensity of traffic and adapts smoothly to changes in rate. Each flow maintains its own independent estimator instance.
+
+The fast rate update formula is:
+
+\begin{equation}
+    \Delta t = t_{\text{current}} - t_{\text{last}}
+\end{equation}
+\begin{equation}
+    r_{\text{instant}} = \frac{1}{\Delta t}
+\end{equation}
 \begin{equation}
     r_{\text{ewma}} = \alpha \cdot r_{\text{instant}} + (1 - \alpha) \cdot r_{\text{ewma}}
 \label{eq:ewma}
 \end{equation}
 
-where $r_{\text{instant}} = 1 / \Delta t$ (the reciprocal of the inter-packet arrival time) and $\alpha = 0.3$ balances reactivity against smoothness. This gives a continuous estimate of the current packets-per-second rate without requiring fixed counting windows.
+The smoothing factor $\alpha = 0.3$ controls the trade-off between responsiveness and stability. The estimator reacts within a few packets to genuine bursts, whilst filtering out isolated spikes.
 
-\paragraph{Adaptive Baseline Learning.} Rather than relying on fixed thresholds, each network flow learns its own baseline ``normal'' rate using a slow-moving EWMA:
+\subsubsection{Adaptive Threshold via Baseline Learning}
+
+Rather than comparing the EWMA rate against a fixed, manually-chosen threshold, Loki IDS uses an adaptive threshold that learns from live traffic. Each flow maintains a second, much slower EWMA that tracks the ``normal'' baseline rate over time:
 
 \begin{equation}
     r_{\text{baseline}} = \alpha_b \cdot r_{\text{instant}} + (1 - \alpha_b) \cdot r_{\text{baseline}}
@@ -749,49 +843,249 @@ where $r_{\text{instant}} = 1 / \Delta t$ (the reciprocal of the inter-packet ar
     T_{\text{adaptive}} = \max\!\left(r_{\text{baseline}} \times M,\; T_{\text{floor}}\right)
 \end{equation}
 
-where $\alpha_b = 0.05$ ensures the baseline moves slowly, $M = 5.0$ is the multiplier, and $T_{\text{floor}}$ is a protocol-specific minimum floor value. This eliminates the need to manually tune thresholds for each network environment. Importantly, the baseline \textbf{only updates when the current rate is below the adaptive threshold}, preventing attackers from poisoning the baseline with sustained high-rate traffic.
+The key idea is that each flow learns what its own normal traffic looks like, and the detection threshold adjusts accordingly. A flow that normally sees 10~pps will get a threshold of 50~pps (with the default multiplier $M=5$), whilst a flow that normally sees 2~pps will get a threshold of 10~pps. This eliminates the need to manually tune thresholds for each network environment.
 
-\paragraph{PortScanningDetector.} Maintains per-flow state using sliding time windows. For each detection type, it tracks packet history in a deque and evicts entries older than the window size. Detection is triggered only when \textbf{both} the sliding window count \textbf{and} the EWMA rate exceed their respective thresholds:
+\paragraph{Warm-Up Period.}
+Before the baseline is considered reliable, the system requires a configurable number of warm-up packets (default: 50). During this warm-up phase, the $T_{\text{floor}}$ value is used as the threshold, providing a safe fallback so the system is still protected from attacks during initial startup.
+
+\paragraph{Baseline Poisoning Protection.}
+A critical concern with adaptive baselines is that an attacker could attempt to inflate the baseline by sending sustained high-rate traffic, thereby raising the threshold and hiding future attacks. To prevent this, the baseline EWMA \textbf{only updates when the current rate is below the current adaptive threshold}. If the traffic rate exceeds the threshold (i.e.\ a potential attack is in progress), the baseline learning is paused:
+
+\begin{lstlisting}[language=python]
+# Only learn from normal traffic, skip during attacks
+if ewma_rate < current_adaptive_threshold:
+    baseline_rate = alpha_baseline * instant_rate \
+                  + (1 - alpha_baseline) * baseline_rate
+\end{lstlisting}
+
+This ensures attacks cannot poison the baseline.
+
+\paragraph{Baseline Persistence Across Attacks.}
+When an attack ends and the fast EWMA rate is reset, the baseline knowledge is preserved. The learned normal rate for a flow does not change simply because one attack ended. This means the system immediately resumes accurate detection after an attack without requiring another warm-up period.
+
+\subsubsection{Dual-Threshold Detection Logic}
+
+An alert is triggered only when \textbf{both} conditions are satisfied simultaneously:
+\begin{enumerate}
+    \item The sliding window packet count exceeds the count threshold (e.g.\ 200~packets in 2~seconds for TCP flood).
+    \item The EWMA rate exceeds the adaptive threshold for that specific flow.
+\end{enumerate}
+
+This dual-check approach significantly reduces false positives. A brief burst of legitimate traffic might exceed one threshold but not both. Conversely, a sustained low-rate attack spread over a long period might not trigger the EWMA threshold even if it accumulates enough packets in the window. Only genuine flood attacks, characterised by both high volume and high rate, trigger detection.
+
+\subsubsection{Detected Attack Types}
+
+Table~\ref{tab:thresholds} summarises the detection parameters for each attack type.
 
 \begin{table}[H]
 \centering
-\caption{Detection thresholds for each attack type.}
+\caption{Behavioural detection parameters with adaptive thresholds.}
 \label{tab:thresholds}
-\begin{tabular}{llll}
+\begin{tabular}{lllp{4.5cm}}
 \toprule
-\textbf{Attack Type} & \textbf{Window (s)} & \textbf{Count Threshold} & \textbf{EWMA Threshold (pps)} \\
+\textbf{Attack Type} & \textbf{Window} & \textbf{Count Threshold} & \textbf{Adaptive EWMA} \\
 \midrule
-Port Scan   & 5 & 20 unique ports & N/A (count only) \\
-TCP Flood   & 2 & 200 packets     & baseline $\times$ 5 (floor: 100) \\
-UDP Flood   & 2 & 300 packets     & baseline $\times$ 5 (floor: 150) \\
-ICMP Flood  & 2 & 100 packets     & baseline $\times$ 5 (floor: 50) \\
+TCP SYN Port Scan & 5\,s & 20 unique ports   & N/A (count-only) \\
+TCP SYN Flood     & 2\,s & 200 packets       & baseline $\times$ 5 (floor: 100\,pps) \\
+UDP Flood         & 2\,s & 300 packets       & baseline $\times$ 5 (floor: 150\,pps) \\
+ICMP Flood        & 2\,s & 100 packets       & baseline $\times$ 5 (floor: 50\,pps) \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Port scan detection tracks the number of \emph{unique destination ports} contacted by a given (source IP, destination IP) pair within the time window. TCP flood detection filters for SYN packets without the ACK flag set, avoiding false positives from legitimate traffic.
+Port scanning detection differs from flood detection in that it counts \emph{unique destination ports} rather than total packets. If a single source IP accesses more than 20 distinct ports on a destination IP within 5~seconds, a port scan alert is raised. EWMA is not applied to port scanning, as the distinguishing feature is port diversity rather than packet rate.
 
-\subsubsection{Signature Detection Engine}
+\subsection{Signature-Based Detection Engine}
+\label{sec:signature}
 
-The \texttt{signature\_engine.py} module loads enabled signatures from the API at startup and performs byte-string matching against packet payloads. For each packet with a Raw (payload) layer, the engine iterates through all loaded signatures and checks whether the pattern bytes are present in the payload.
+The signature engine (\texttt{signature\_engine.py}) performs payload-based pattern matching against a database of known attack signatures. When a packet carries a Raw layer (application-layer data), its payload bytes are checked against each signature pattern.
 
-Signatures are managed through the web interface and stored in the SQLite database. Each signature has a name, a pattern string, a description, and an enabled flag. Example signatures include \texttt{UNION SELECT} (SQL injection), \texttt{<script>} (XSS), \texttt{../} (directory traversal), and \texttt{; /bin/} (command injection). Signatures can be dynamically added, edited, deleted, enabled, or disabled through the web dashboard without restarting the IDS. Bulk import from YAML files is also supported.
+\subsubsection{Signature Loading}
 
-\subsubsection{Alert Logging and Lifecycle}
+Signatures are loaded from the SQLite database at startup via the database integration module. Each signature consists of a name, a text pattern, an action, and a description. The text pattern is encoded to bytes at load time for efficient matching. Only enabled signatures are loaded:
 
-The \texttt{logger.py} module implements the \texttt{LokiLogger} class, which handles alert aggregation and lifecycle tracking:
+\begin{lstlisting}[language=python]
+# Signature format (from database)
+{
+    "name": "SQL Injection - Union Select",
+    "pattern": "UNION SELECT",
+    "pattern_bytes": b"UNION SELECT",  # pre-encoded
+    "action": "alert",
+    "description": "Detects UNION SELECT SQL injection"
+}
+\end{lstlisting}
 
-\begin{enumerate}
-    \item \textbf{New alert (STARTED):} When an attack is first detected, a STARTED alert is logged to both the console, a JSONL log file, and the API.
+\subsubsection{Matching Process}
 
-    \item \textbf{Ongoing alert (ONGOING):} Subsequent packets matching the same attack are tracked internally. Every 5~seconds (configurable), an ONGOING update is logged with the current packet count, duration, and attack rate. A maximum of 3 ONGOING updates are logged per attack to prevent log flooding.
+For each packet with a Raw layer, the engine iterates through all loaded signatures and checks whether \texttt{pattern\_bytes in payload}. This is a simple substring search using Python's built-in \texttt{in} operator, which is implemented in C and runs efficiently. The first matching rule is returned.
 
-    \item \textbf{Ended alert (ENDED):} A background check runs every 2~seconds. If no matching packets have been seen for 10~seconds (the cooldown period), the attack is considered ended. A final ENDED alert is logged with total duration, total packets, average packets-per-second, and first/last-seen timestamps.
-\end{enumerate}
+\subsubsection{Example Signatures}
 
-Alerts are keyed by (type, message, source IP, destination IP, destination port). For port scans, the key omits the port since scans target multiple ports by definition. All alerts are sent to the API server via HTTP POST (using \texttt{db\_integration.py}), which stores them in the SQLite database.
+Table~\ref{tab:signatures} lists the default signature rules.
 
-\subsubsection{API Server}
+\begin{table}[H]
+\centering
+\caption{Example signature rules.}
+\label{tab:signatures}
+\begin{tabular}{llp{4cm}}
+\toprule
+\textbf{Name} & \textbf{Pattern} & \textbf{Category} \\
+\midrule
+SQL Injection -- Union Select  & \texttt{UNION SELECT}    & SQL Injection \\
+SQL Injection -- OR 1=1        & \texttt{OR 1=1}          & SQL Injection \\
+Path Traversal -- Etc Passwd   & \texttt{/etc/passwd}     & Path Traversal \\
+XSS -- Script Tag              & \texttt{<script>}        & Cross-Site Scripting \\
+XSS -- JavaScript Alert        & \texttt{javascript:alert}& Cross-Site Scripting \\
+Command Injection -- Semicolon & \texttt{; /bin/}         & Command Injection \\
+Git Repository Access          & \texttt{/.git/}          & Information Disclosure \\
+Test Attack Signature          & \texttt{ATTACK\_TEST}    & Testing \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Logging and Alert Lifecycle Management}
+\label{sec:logging}
+
+The logger module (\texttt{logger.py}) is responsible for recording detected alerts with smart deduplication. During a sustained attack, the IDS may detect the same attack hundreds or thousands of times per second. Without deduplication, this would flood the log files and database with identical entries.
+
+\subsubsection{Alert Lifecycle}
+
+Each unique alert progresses through a three-stage lifecycle:
+
+\begin{description}[style=nextline]
+    \item[STARTED] Logged immediately when a new attack is first detected. Contains the initial packet details.
+    \item[ONGOING] Periodic updates logged during a sustained attack (at most 3~updates, every 5~seconds). Includes cumulative statistics: packet count, duration, and attack rate in packets per second.
+    \item[ENDED] Logged when the attack ceases (no new packets for 10~seconds). Contains a comprehensive summary: total duration, total packets, average rate, first/last seen timestamps.
+\end{description}
+
+\subsubsection{Deduplication Logic}
+
+Alerts are deduplicated by a composite key that groups related packets:
+\begin{itemize}
+    \item \textbf{Port scans:} key = \texttt{(type, message, src\_ip, dst\_ip, "scan")}.
+    \item \textbf{Floods:} key = \texttt{(type, message, src\_ip, dst\_ip, dst\_port)}.
+\end{itemize}
+All subsequent packets matching an existing key update the internal state without generating new log entries, except for the periodic ONGOING updates.
+
+\subsubsection{Alert Types and Subtypes}
+
+Table~\ref{tab:alert_types} shows the alert classification taxonomy.
+
+\begin{table}[H]
+\centering
+\caption{Alert classification taxonomy.}
+\label{tab:alert_types}
+\begin{tabular}{llp{5.5cm}}
+\toprule
+\textbf{Type} & \textbf{Subtype} & \textbf{Description} \\
+\midrule
+BEHAVIOR  & PORT\_SCAN  & TCP port scanning detection \\
+BEHAVIOR  & TCP\_FLOOD  & TCP SYN flood (DoS/DDoS) \\
+BEHAVIOR  & UDP\_FLOOD  & UDP flood (DoS/DDoS) \\
+BEHAVIOR  & ICMP\_FLOOD & ICMP flood (DoS/DDoS) \\
+SIGNATURE & (none)      & Payload pattern match \\
+SYSTEM    & (none)      & System events (startup, shutdown, errors) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Output Formats}
+
+All alerts are written to a JSONL (JSON Lines) file at \texttt{logs/loki\_alerts.jsonl}, with one JSON object per line. Each record contains a timestamp, alert status, type, subtype, source/destination IP and port, a human-readable message, and a details object with additional context. When database integration is enabled, alerts are concurrently written to the SQLite database.
+
+Example JSONL record (STARTED):
+
+\begin{lstlisting}[language=json]
+{
+  "timestamp": "2026-01-30T22:15:00.123456",
+  "status": "STARTED",
+  "type": "BEHAVIOR",
+  "subtype": "TCP_FLOOD",
+  "src_ip": "10.0.0.50",
+  "dst_ip": "10.0.0.1",
+  "src_port": 12345,
+  "dst_port": 443,
+  "message": "TCP Flood (DoS/DDoS) Detected on FORWARD chain",
+  "details": {"dst_ip": "10.0.0.1", "chain": "FORWARD"}
+}
+\end{lstlisting}
+
+\subsection{Database Integration}
+\label{sec:db_integration}
+
+The database integration module (\texttt{db\_integration.py}) provides a bridge between the synchronous IDS packet-processing loop and the asynchronous SQLAlchemy database layer used by the web interface. It exposes two primary operations: inserting alerts and retrieving signature rules.
+
+Since the IDS runs in a synchronous context (NFQUEUE callbacks are not async), the module spawns background threads with their own \texttt{asyncio} event loops to perform database operations without blocking packet processing. Alert insertions are fire-and-forget (non-blocking), whilst signature retrieval is blocking (the IDS waits for signatures to be loaded before starting detection).
+
+The database uses SQLite with the \texttt{aiosqlite} driver, stored at \texttt{Web-Interface/loki\_ids.db}. The schema includes tables for alerts, signatures, and a statistics cache.
+
+\subsection{Configuration and Thresholds}
+\label{sec:config}
+
+All detection thresholds are configurable via the \texttt{PortScanningDetector} constructor in \texttt{detectore\_engine.py}. The following tables summarise all tuneable parameters.
+
+\subsubsection{Sliding Window Parameters}
+
+\begin{table}[H]
+\centering
+\caption{Sliding window detection thresholds.}
+\label{tab:window_params}
+\begin{tabular}{llll}
+\toprule
+\textbf{Parameter} & \textbf{Default} & \textbf{Unit} & \textbf{Description} \\
+\midrule
+\texttt{port\_scanning\_window}    & 5   & seconds      & Window duration for port scan detection \\
+\texttt{port\_scanning\_threshold} & 20  & unique ports & Distinct ports to trigger alert \\
+\texttt{tcp\_flood\_window}        & 2   & seconds      & Window duration for TCP flood \\
+\texttt{tcp\_flood\_threshold}     & 200 & packets      & Packet count to trigger TCP flood \\
+\texttt{udp\_flood\_window}        & 2   & seconds      & Window duration for UDP flood \\
+\texttt{udp\_flood\_threshold}     & 300 & packets      & Packet count to trigger UDP flood \\
+\texttt{icmp\_flood\_window}       & 2   & seconds      & Window duration for ICMP flood \\
+\texttt{icmp\_flood\_threshold}    & 100 & packets      & Packet count to trigger ICMP flood \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Adaptive EWMA Parameters}
+
+\begin{table}[H]
+\centering
+\caption{Adaptive EWMA threshold parameters.}
+\label{tab:ewma_params}
+\begin{tabular}{llp{6.5cm}}
+\toprule
+\textbf{Parameter} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\texttt{alpha}              & 0.3      & Fast EWMA smoothing factor. Tracks current rate. Higher = more reactive to bursts. \\
+\texttt{alpha\_baseline}    & 0.05     & Slow EWMA smoothing factor. Learns baseline ``normal'' rate. Much smaller so it moves slowly. \\
+\texttt{multiplier}         & 5.0      & How many times above baseline constitutes an attack. $T = \text{baseline} \times \text{multiplier}$. \\
+\texttt{minimum\_floor} (TCP)  & 100.0\,pps  & Minimum threshold floor for TCP flood. Used during warm-up. \\
+\texttt{minimum\_floor} (UDP)  & 150.0\,pps  & Minimum threshold floor for UDP flood. \\
+\texttt{minimum\_floor} (ICMP) & 50.0\,pps   & Minimum threshold floor for ICMP flood. \\
+\texttt{warmup\_packets}    & 50       & Packets required before baseline is trusted. During warm-up, $T_{\text{floor}}$ is used. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Logger Parameters}
+
+\begin{table}[H]
+\centering
+\caption{Logger configuration parameters.}
+\label{tab:logger_params}
+\begin{tabular}{llp{6.5cm}}
+\toprule
+\textbf{Parameter} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\texttt{alert\_cooldown}   & 10\,s & Time of inactivity before an attack is considered ended \\
+\texttt{update\_interval}  & 5\,s  & Minimum interval between ONGOING log entries \\
+\texttt{max\_updates}      & 3     & Maximum number of ONGOING entries per attack \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{API Server}
+\label{sec:api}
 
 The API server is built with FastAPI and serves both the REST API and the static web dashboard.
 
@@ -823,131 +1117,388 @@ WS     & \texttt{/ws/alerts}                      & Real-time alert streaming \\
 
 The database uses SQLite with WAL (Write-Ahead Logging) mode enabled for concurrent read/write access. The async engine (via \texttt{aiosqlite}) ensures that database operations do not block the event loop.
 
-\subsubsection{Project Structure}
+\subsection{Project File Structure}
+\label{sec:structure}
 
 \begin{lstlisting}[frame=none,backgroundcolor=\color{white},basicstyle=\ttfamily\footnotesize]
 Loki-IDS/
-+-- Core/loki/                    # IDS Engine and API Server
-|   +-- nfqueue_app.py            # Main packet processing loop
-|   +-- packet_parser.py          # Scapy-based packet extraction
-|   +-- detectore_engine.py       # Behavioural detection (EWMA)
-|   +-- signature_engine.py       # Pattern-based payload matching
-|   +-- logger.py                 # Alert lifecycle management
-|   +-- db_integration.py         # HTTP client for API
-|   +-- api/
-|       +-- main.py               # FastAPI application
-|       +-- models/               # SQLAlchemy models, schemas, CRUD
-|       +-- routes/               # API route handlers
-|       +-- iot/                  # MQTT client (paho-mqtt 2.x)
-+-- Web-Interface/static/         # Frontend (HTML, JS, CSS)
-+-- esp/                          # ESP32 firmware (.ino)
-+-- Scripts/                      # iptables setup/teardown
-+-- start_loki_system.sh          # Full system startup
-+-- run_loki.sh                   # IDS-only startup
-+-- setup_venv.sh                 # Virtual environment setup
-+-- requirements.txt              # Python dependencies
+|-- Core/
+|   +-- loki/
+|       |-- nfqueue_app.py          # Main entry point
+|       |-- detectore_engine.py     # Behavioural detection
+|       |                            (sliding window +
+|       |                             adaptive EWMA)
+|       |-- signature_engine.py     # Signature pattern matching
+|       |-- packet_parser.py        # Scapy packet field extraction
+|       |-- logger.py               # Alert logging + deduplication
+|       |-- db_integration.py       # Async DB bridge
+|       +-- api/
+|           +-- main.py             # FastAPI application
+|           +-- models/             # SQLAlchemy models, schemas, CRUD
+|           +-- routes/             # API route handlers
+|           +-- iot/                # MQTT client (paho-mqtt 2.x)
+|
+|-- Web-Interface/static/           # Frontend (HTML, JS, CSS)
+|
+|-- Scripts/
+|   |-- install_deps.sh             # Dependency installer
+|   |-- iptables_up.sh              # Setup NFQUEUE rules
+|   +-- iptables_down.sh            # Remove NFQUEUE rules
+|
+|-- attack-scripts/
+|   |-- nmap-portscan.sh            # Port scan test
+|   |-- dos-tcp.sh                  # TCP flood test
+|   |-- dos-udp.sh                  # UDP flood test
+|   +-- icmp-attack.sh              # ICMP flood test
+|
+|-- Configs/
+|   +-- test_yaml_file.yaml         # Legacy YAML signatures
+|
+|-- logs/
+|   +-- loki_alerts.jsonl           # Alert log output
+|
++-- run_loki.sh                     # One-command launcher
++-- start_loki_system.sh            # Full system startup
++-- setup_venv.sh                   # Virtual environment setup
++-- requirements.txt                # Python dependencies
 \end{lstlisting}
 
 \subsection{Testing}
 \label{sec:testing}
 
-The IDS was tested against the following attack scenarios, all executed from a machine connected to the Pi's Wi-Fi network.
+The IDS was tested against all supported attack categories to verify correct detection, alert lifecycle management, and dashboard integration. All attacks were launched from a dedicated attacker Raspberry~Pi connected to the network through the MikroTik router, simulating an external adversary who is not a member of the IoT Wi-Fi network.
 
-\subsubsection*{1. Port Scan Detection}
+\subsubsection{Attack Scripts}
+\label{sec:attack_scripts}
+
+To facilitate reproducible testing, a set of attack scripts is provided in the \texttt{attack-scripts/} directory of the project repository. These scripts are deployed on the attacker Raspberry~Pi's home directory and accept the target IP address as a command-line argument. Table~\ref{tab:attack_scripts} summarises the available scripts.
+
+\begin{table}[H]
+\centering
+\caption{Attack scripts for IDS testing.}
+\label{tab:attack_scripts}
+\begin{tabular}{llp{5.5cm}}
+\toprule
+\textbf{Script} & \textbf{Tool} & \textbf{Purpose} \\
+\midrule
+\texttt{nmap-portscan.sh} & Nmap   & TCP service/version scan of the top 1000 ports \\
+\texttt{dos-tcp.sh}       & Nping  & TCP flood: sends 1000 TCP packets to port 10001 \\
+\texttt{dos-udp.sh}       & Nping  & UDP flood: sends 1000 UDP packets to port 10001 \\
+\texttt{icmp-attack.sh}   & Nping  & ICMP flood: sends 1000 ICMP echo requests \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The contents of each script are shown below.
+
+\paragraph{Port Scan (\texttt{attack-scripts/nmap-portscan.sh}).}
+\begin{lstlisting}[language=bash]
+sudo nmap -sV --top-ports 1000 $1
+\end{lstlisting}
+
+This script performs a service/version scan (\texttt{-sV}) of the 1000 most commonly used TCP ports on the target. Nmap sends SYN probes to each port and, for open ports, attempts to identify the running service. The IDS detects this as a port scan because the attacker contacts more than 20 distinct destination ports within the 5-second sliding window.
+
+\paragraph{TCP Flood (\texttt{attack-scripts/dos-tcp.sh}).}
+\begin{lstlisting}[language=bash]
+#!/bin/bash
+sudo nping -tcp -p 10001 -c 1000 $1
+\end{lstlisting}
+
+Sends 1000 TCP packets to port 10001 at the maximum rate permitted by Nping. The high packet rate triggers both the sliding window count threshold (200 packets in 2~seconds) and the adaptive EWMA rate threshold.
+
+\paragraph{UDP Flood (\texttt{attack-scripts/dos-udp.sh}).}
+\begin{lstlisting}[language=bash]
+sudo nping -udp -p 10001 -c 1000 $1
+\end{lstlisting}
+
+Sends 1000 UDP datagrams to port 10001. The detection logic mirrors the TCP flood case but uses the UDP-specific thresholds (300 packets in 2~seconds, EWMA floor of 150\,pps).
+
+\paragraph{ICMP Flood (\texttt{attack-scripts/icmp-attack.sh}).}
+\begin{lstlisting}[language=bash]
+#!/bin/bash
+sudo nping -icmp -c 1000 $1
+\end{lstlisting}
+
+Sends 1000 ICMP echo request packets. The ICMP flood detector triggers at 100 packets within the 2-second window combined with the EWMA rate exceeding 50\,pps.
+
+\paragraph{Usage.} Each script is executed from the attacker Raspberry~Pi with the target IP address as the sole argument:
 
 \begin{lstlisting}[language=bash]
-nmap -sS 10.0.0.1
+# From the attacker Raspberry Pi
+bash dos-tcp.sh 10.0.0.1
+\end{lstlisting}
+
+\subsubsection{Test Results}
+
+\paragraph{1. Port Scan Detection.}
+
+\begin{lstlisting}[language=bash]
+# From attacker RPi
+bash nmap-portscan.sh 10.0.0.1
 \end{lstlisting}
 
 \textbf{Result:} Loki detected the scan within 2~seconds. The dashboard showed a BEHAVIOR alert with subtype PORT\_SCAN, correctly identifying the source IP and listing the scanned ports. The alert lifecycle progressed from STARTED through ONGOING to ENDED.
 
-\subsubsection*{2. TCP SYN Flood}
+\paragraph{2. TCP Flood.}
 
 \begin{lstlisting}[language=bash]
-sudo hping3 -S --flood -p 80 10.0.0.1
+# From attacker RPi
+bash dos-tcp.sh 10.0.0.1
 \end{lstlisting}
 
 \textbf{Result:} Alert raised after the EWMA rate exceeded 100\,pps and the sliding window count exceeded 200. ONGOING updates showed the attack rate climbing to several thousand packets per second. The ENDED alert reported the total packet count and duration.
 
-\subsubsection*{3. UDP Flood}
+\paragraph{3. UDP Flood.}
 
 \begin{lstlisting}[language=bash]
-sudo hping3 --udp --flood -p 53 10.0.0.1
+# From attacker RPi
+bash dos-udp.sh 10.0.0.1
 \end{lstlisting}
 
 \textbf{Result:} UDP\_FLOOD alert raised with correct thresholds. The dual-check mechanism prevented false positives from normal DNS traffic.
 
-\subsubsection*{4. ICMP Flood}
+\paragraph{4. ICMP Flood.}
 
 \begin{lstlisting}[language=bash]
-sudo hping3 --icmp --flood 10.0.0.1
+# From attacker RPi
+bash icmp-attack.sh 10.0.0.1
 \end{lstlisting}
 
 \textbf{Result:} ICMP\_FLOOD alert raised correctly. The EWMA threshold of 50\,pps was reached quickly during the flood.
 
-\subsubsection*{5. Signature Detection}
+\paragraph{5. Signature Detection.}
 
 \begin{lstlisting}[language=bash]
-curl "http://10.0.0.1:8080/test?id=1 UNION SELECT * FROM users"
+# From attacker RPi
+echo "ATTACK_TEST" | nc 10.0.0.1 80
 \end{lstlisting}
 
-\textbf{Result:} SIGNATURE alert with the matching pattern ``UNION SELECT'' displayed in the dashboard. The source IP and matched rule name were correctly recorded.
+\textbf{Result:} SIGNATURE alert with the matching pattern ``ATTACK\_TEST'' displayed in the dashboard. The source IP and matched rule name were correctly recorded.
 
-\subsubsection*{6. Normal Traffic (False Positive Test)}
+\paragraph{6. Normal Traffic (False Positive Test).}
 
 Regular web browsing, MQTT communication between ESP32 devices, and SSH sessions were tested to verify they did not trigger alerts. No false positives were observed during normal operation.
 
-\subsection{Reproducible Setup Steps}
-\label{sec:ids_steps}
+\subsubsection{Supervisor Testing Procedure}
+\label{sec:supervisor_testing}
 
-\subsubsection*{Prerequisites}
-\begin{itemize}
-    \item Raspberry~Pi configured as AP (see Section~\ref{sec:env_steps}).
-    \item ESP32 devices flashed and connected.
-    \item Python virtual environment created (\texttt{bash setup\_venv.sh}).
-\end{itemize}
+The following step-by-step procedure allows the supervisor to independently verify the IDS functionality on the prepared test environment. All equipment is pre-configured; no additional setup is required.
 
-\subsubsection*{Step 1: Start the Complete System}
+\paragraph{Step 1: Verify the Environment.}
+\begin{enumerate}
+    \item Power on the Raspberry~Pi gateway. It will automatically start the access point and begin broadcasting the \texttt{Access-Point} Wi-Fi network.
+    \item Confirm that the MikroTik router is powered on and connected to the Pi's Ethernet port (\texttt{eth0}).
+    \item Connect the attacker Raspberry~Pi (or a laptop) to the MikroTik router via Ethernet or the router's Wi-Fi.
+\end{enumerate}
 
+\paragraph{Step 2: Start the Loki IDS System.}
+On the Raspberry~Pi gateway, start the full system:
 \begin{lstlisting}[language=bash]
 cd ~/Loki-IDS
 sudo bash start_loki_system.sh
 \end{lstlisting}
+This script starts the API server on port 8080, configures the iptables NFQUEUE rules, and launches the IDS engine. Wait until the terminal output confirms that both NFQUEUE threads (INPUT queue~100 and FORWARD queue~200) are running.
 
-This starts both the API server and the IDS core. The script launches the FastAPI server on port 8080, waits until the health endpoint responds, sets up iptables NFQUEUE rules, and starts the packet processing engine.
+\paragraph{Step 3: Access the Dashboard.}
+Open a web browser on a device connected to the access point and navigate to:
+\begin{lstlisting}[frame=none,backgroundcolor=\color{white}]
+http://10.0.0.1:8080
+\end{lstlisting}
+Verify that the dashboard loads and the \textbf{Dashboard} tab shows the system status as ``Running''.
 
-\subsubsection*{Step 2: Access the Dashboard}
+\paragraph{Step 4: Verify IoT Device Connectivity.}
+\begin{enumerate}
+    \item Power on both ESP32 modules. They will automatically connect to the access point and the MQTT broker.
+    \item In the dashboard, navigate to the \textbf{IoT Control} tab and confirm that both devices appear as ``Online'' (indicated by periodic MQTT heartbeat messages).
+    \item Test device control: toggle the alarm on ESP32-1 and adjust the bulb brightness on ESP32-2 from the dashboard to confirm end-to-end MQTT communication.
+\end{enumerate}
 
-Open a browser on any device connected to the Pi's Wi-Fi and navigate to \texttt{http://10.0.0.1:8080}.
+\paragraph{Step 5: Run Attack Scripts from the Attacker Machine.}
+From the attacker Raspberry~Pi (connected via the MikroTik router), execute each attack script in sequence, allowing approximately 15~seconds between scripts for the previous alert to reach its ENDED state:
 
-\subsubsection*{Step 3: Add Signatures (Optional)}
+\begin{lstlisting}[language=bash]
+# 1. Port Scan
+bash ~/nmap-portscan.sh 10.0.0.1
 
-Navigate to the Signatures tab and either add signatures manually or import from a YAML file:
+# 2. TCP Flood
+bash ~/dos-tcp.sh 10.0.0.1
 
-\begin{lstlisting}
-- name: SQL Injection
-  pattern: "UNION SELECT"
-  description: Detects SQL injection attempts
+# 3. UDP Flood
+bash ~/dos-udp.sh 10.0.0.1
 
-- name: XSS Attack
-  pattern: "<script>"
-  description: Detects cross-site scripting payloads
+# 4. ICMP Flood
+bash ~/icmp-attack.sh 10.0.0.1
 \end{lstlisting}
 
-\subsubsection*{Step 4: Verify IoT Devices}
+After each script completes, switch to the dashboard's \textbf{Alerts} tab and verify:
+\begin{itemize}
+    \item A new alert has appeared with the correct type (BEHAVIOR) and subtype (PORT\_SCAN, TCP\_FLOOD, UDP\_FLOOD, or ICMP\_FLOOD).
+    \item The source IP matches the attacker machine's IP address.
+    \item The alert lifecycle transitions from STARTED to ONGOING and finally to ENDED after approximately 10~seconds of inactivity.
+    \item A real-time toast notification appeared when the alert was first raised.
+\end{itemize}
 
-On the IoT Control tab, check that both ESP32 devices show as ``Online''. Test the controls---toggle the alarm on ESP32-1 and adjust the brightness on ESP32-2.
+\paragraph{Step 6: Test Signature Detection.}
+\begin{lstlisting}[language=bash]
+# From the attacker machine
+echo "ATTACK_TEST" | nc 10.0.0.1 80
+\end{lstlisting}
+Verify that a SIGNATURE alert appears in the dashboard with the matched rule name ``Test Attack Signature''.
 
-\subsubsection*{Step 5: Stop the System}
+\paragraph{Step 7: Inspect Alert Logs.}
+On the Raspberry~Pi gateway, inspect the alert log file to confirm all alerts were persisted:
+\begin{lstlisting}[language=bash]
+cat ~/Loki-IDS/logs/loki_alerts.jsonl | python3 -m json.tool
+\end{lstlisting}
+Each attack should have produced three log entries: STARTED, ONGOING, and ENDED.
 
-Press \texttt{Ctrl+C} in the terminal. The cleanup handler automatically removes all iptables NFQUEUE rules, stops the API server, and disconnects the MQTT client.
+\paragraph{Step 8: Verify Normal Traffic (No False Positives).}
+From a device connected to the access point, perform normal operations---browse the dashboard, let ESP32 devices send heartbeats, and initiate SSH sessions to the Pi. Confirm that no BEHAVIOR or SIGNATURE alerts are raised during this period.
+
+\paragraph{Step 9: Shutdown.}
+\begin{lstlisting}[language=bash]
+# Press Ctrl+C in the IDS terminal, then:
+sudo bash ~/Loki-IDS/Scripts/iptables_down.sh
+\end{lstlisting}
+The IDS performs a graceful shutdown: all active alerts are finalised with ENDED status and iptables rules are removed.
+
+\subsection{Deployment and Execution}
+\label{sec:deployment}
+
+\subsubsection*{Prerequisites}
+\begin{itemize}
+    \item Raspberry~Pi (or any Linux system) running Debian/Ubuntu with root access.
+    \item Python 3.12 or later (Python 3.13 recommended).
+    \item System packages: \texttt{build-essential}, \texttt{python3-dev}, \texttt{python3-venv}, \texttt{libnetfilter-queue-dev}, \texttt{libnfnetlink-dev}, \texttt{libpcap-dev}.
+    \item Python packages: \texttt{NetfilterQueue}, \texttt{scapy}, \texttt{pyyaml}.
+\end{itemize}
+
+\subsubsection*{Quick Start (One Command)}
+
+The simplest way to run the IDS is to use the launcher script from the project root:
+
+\begin{lstlisting}[language=bash]
+cd /path/to/Loki-IDS
+sudo bash run_loki.sh
+\end{lstlisting}
+
+This script automatically sets up iptables rules, activates the virtual environment, starts the IDS, and cleans up iptables rules when \texttt{Ctrl+C} is pressed.
+
+\subsection{Reproducible Setup Steps}
+\label{sec:ids_steps}
+
+This section provides a complete, reproducible procedure for deploying Loki IDS on a Raspberry~Pi from a clean installation.
+
+\subsubsection*{Step 1: Clone the Repository}
+
+\begin{lstlisting}[language=bash]
+cd ~
+git clone <repository-url> Loki-IDS
+cd Loki-IDS
+\end{lstlisting}
+
+\subsubsection*{Step 2: Install System Dependencies}
+
+\begin{lstlisting}[language=bash]
+sudo apt update
+sudo apt install -y build-essential python3-dev python3-venv \
+    libnetfilter-queue-dev libnfnetlink-dev libpcap-dev
+\end{lstlisting}
+
+\subsubsection*{Step 3: Create the Python Virtual Environment}
+
+\begin{lstlisting}[language=bash]
+python3 -m venv loki_env
+source loki_env/bin/activate
+pip install --upgrade pip
+pip install NetfilterQueue scapy pyyaml
+\end{lstlisting}
+
+Alternatively, run \texttt{bash Scripts/install\_deps.sh} which performs steps~2 and~3 automatically.
+
+\subsubsection*{Step 4: Initialise the Database (Optional)}
+
+If using the web interface for signature management and alert storage:
+
+\begin{lstlisting}[language=bash]
+cd Web-Interface
+venv/bin/python3 init_database.py
+cd ..
+\end{lstlisting}
+
+\subsubsection*{Step 5: Configure iptables}
+
+\begin{lstlisting}[language=bash]
+sudo bash Scripts/iptables_up.sh
+\end{lstlisting}
+
+Verify that the NFQUEUE rules are active:
+
+\begin{lstlisting}[language=bash]
+sudo iptables -L --line-numbers | grep NFQUEUE
+# Expected output:
+# 1  NFQUEUE  ...  NFQUEUE num 100 bypass
+# 1  NFQUEUE  ...  NFQUEUE num 200 bypass
+\end{lstlisting}
+
+\subsubsection*{Step 6: Start the IDS}
+
+\begin{lstlisting}[language=bash]
+source loki_env/bin/activate
+cd Core/loki
+sudo python3 nfqueue_app.py
+\end{lstlisting}
+
+The IDS will output startup messages confirming database integration, signature loading, and thread initialisation. Packet-level logs will appear in real time. During the initial warm-up period (first $\sim$50~packets per flow), the adaptive EWMA thresholds will use their minimum floor values. After warm-up completes, the thresholds will automatically adjust to the learned baseline for each flow.
+
+\subsubsection*{Step 7: Verify Detection}
+
+From the attacker Raspberry~Pi (connected via the MikroTik router), run the provided attack scripts to verify detection is working:
+
+\begin{lstlisting}[language=bash]
+# Port scan (from attacker RPi)
+bash ~/nmap-portscan.sh 10.0.0.1
+
+# TCP flood
+bash ~/dos-tcp.sh 10.0.0.1
+
+# UDP flood
+bash ~/dos-udp.sh 10.0.0.1
+
+# ICMP flood
+bash ~/icmp-attack.sh 10.0.0.1
+
+# Signature test (send payload containing pattern)
+echo "ATTACK_TEST" | nc 10.0.0.1 80
+\end{lstlisting}
+
+\subsubsection*{Step 8: Stop and Clean Up}
+
+\begin{lstlisting}[language=bash]
+# Press Ctrl+C in the IDS terminal, then:
+sudo bash Scripts/iptables_down.sh
+deactivate
+\end{lstlisting}
+
+The system performs a graceful shutdown: all active alerts are finalised with ENDED status, session statistics are logged, and (if using \texttt{run\_loki.sh}) iptables rules are automatically removed.
+
+\subsubsection*{Step 9: Review Logs}
+
+\begin{lstlisting}[language=bash]
+# View alerts
+cat logs/loki_alerts.jsonl | python3 -m json.tool
+
+# Count alerts by type
+grep -c '"type": "BEHAVIOR"' logs/loki_alerts.jsonl
+grep -c '"type": "SIGNATURE"' logs/loki_alerts.jsonl
+\end{lstlisting}
 
 
 % ══════════════════════════════════════════════════════════
 % REFERENCES
 % ══════════════════════════════════════════════════════════
 \newpage
-\begin{thebibliography}{13}
+\begin{thebibliography}{14}
 
 \bibitem{atzori2010iot}
 L.~Atzori, A.~Iera, and G.~Morabito,
@@ -1014,6 +1565,11 @@ in \emph{Proc.\ IEEE Symposium on Security and Privacy}, 2010, pp.~305--316.
 H.~Alaiz-Moreton \emph{et~al.},
 ``Multiclass classification procedure for detecting attacks on MQTT-IoT protocol,''
 \emph{Complexity}, vol.~2019, pp.~1--11, 2019.
+
+\bibitem{page2021prisma}
+M.~J.~Page \emph{et~al.},
+``The PRISMA 2020 statement: An updated guideline for reporting systematic reviews,''
+\emph{BMJ}, vol.~372, p.~n71, 2021.
 
 \end{thebibliography}
 
